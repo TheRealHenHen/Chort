@@ -23,13 +23,17 @@ class Error:
 class IllegalCharError(Error):
         
     def __init__(self, pos_start, pos_end, details):
-        super().__init__(pos_start, pos_end, "Illegal Character", details)
-
+        super().__init__(pos_start, pos_end, "Illegal Character >:(", details)
 
 class InvalidSyntaxError(Error):
         
     def __init__(self, pos_start, pos_end, details):
-        super().__init__(pos_start, pos_end, "Illegal Syntax", details)
+        super().__init__(pos_start, pos_end, "Illegal Syntax >:(", details)
+
+class RuntimeError(Error):
+        
+    def __init__(self, pos_start, pos_end, details):
+        super().__init__(pos_start, pos_end, "Runtime Error >:O", details)
 
 
 
@@ -336,6 +340,32 @@ class Parser:
         return result.success(left)
             
 
+# =========== RUNTIME RESULT ===========
+
+class RuntimeResult:
+    
+    def __init__(self):
+        
+        self.value = None
+        self.error = None
+        
+    def register(self, result):
+        
+        if result.error:
+            self.error = self.error
+        
+        return result.value
+
+    def success(self, value):
+
+        self.value = value
+        return self
+        
+    def failure(self, error):
+    
+        self.error = error
+        return self
+
 # =========== VALUES ===========
 
 class Number:
@@ -354,19 +384,21 @@ class Number:
 
     def added_to(self, other):
         if isinstance(other, Number):
-            return Number(self.value + other.value)
+            return Number(self.value + other.value), None
 
     def subtracted_by(self, other):
         if isinstance(other, Number):
-            return Number(self.value - other.value)
+            return Number(self.value - other.value), None
         
     def multiplied_to(self, other):
         if isinstance(other, Number):
-            return Number(self.value * other.value)
+            return Number(self.value * other.value), None
         
     def divided_by(self, other):
         if isinstance(other, Number):
-            return Number(self.value / other.value)
+            if other.value == 0:
+                return None, RuntimeError(other.pos_start, other.pos_end, "We don't know what divided by zero is yet!")
+            return Number(self.value / other.value), None
 
     def __repr__(self):
         return str(self.value)
@@ -388,33 +420,57 @@ class Interpreter:
         raise Exception(f"I can't visit that method! ({type(node).__name__} doesn't exist bro)")
 
     def visit_NumberNode(self, node):
-        return Number(node.token.value).set_pos(node.pos_start, node.pos_end)
+        
+        return RuntimeResult().success(Number(node.token.value).set_pos(node.pos_start, node.pos_end))
         
     def visit_BinaryOperatorNode(self, node):
-        left = self.visit(node.left_node)
-        right = self.visit(node.right_node)
+        
+        response = RuntimeResult()
+        
+        left = response.register(self.visit(node.left_node))
+        
+        if response.error:
+            return response
+        
+        right = response.register(self.visit(node.right_node))
+
+        if response.error:
+            return response
 
         operator = node.operator_token.type
 
         if operator == TT_ADD:
-            result = left.added_to(right)
+            result, error = left.added_to(right)
         elif operator == TT_SUB:
-            result = left.subtracted_by(right)
+            result, error = left.subtracted_by(right)
         elif operator == TT_MUL:
-            result = left.multiplied_to(right)
+            result, error = left.multiplied_to(right)
         elif operator == TT_DIV:
-            result = left.divided_by(right)
+            result, error = left.divided_by(right)
             
-        return result.set_pos(node.pos_start, node.pos_end)
+        if error:
+            return response.failure(error)
+        else:
+            return response.success(result.set_pos(node.pos_start, node.pos_end))
             
     def visit_UnaryOperatorNode(self, node):
 
-        number = self.visit(node.node)
+        result = RuntimeResult()
+
+        number = result.register(self.visit(node.node))
+        
+        if result.error:
+            return result
+        
+        error = None
 
         if node.operator_token.type == TT_SUB:
-            number = number.multiplied_to(Number(-1))
+            number, error = number.multiplied_to(Number(-1))
             
-        return number.set_pos(node.pos_start, node.pos_end)
+        if error:
+            return result.failure(error)
+        else:
+            return result.success(number.set_pos(node.pos_start, node.pos_end))
 
 # =========== RUN ===========
 
@@ -438,4 +494,4 @@ def run(file_name, text):
     interpreter = Interpreter()
     result = interpreter.visit(ast.node)
     
-    return result, None
+    return result.value, result.error
