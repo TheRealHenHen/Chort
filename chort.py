@@ -198,6 +198,14 @@ class BinaryOperationNode:
     def __repr__(self):
         return f"({self.left_node}, {self.operator_token}, {self.right_node})"
 
+class UnaryOperationNode:
+    
+    def __init__(self, operator_token, node):
+        self.operator_token = operator_token
+        self.node = node
+        
+    def __repr__(self):
+        return f"({self.operator_token}, {self.node})"
 
 # =========== PARSE RESULT ===========
 
@@ -250,7 +258,7 @@ class Parser:
         result = self.expression()
         
         if not result.error and self.current_token.type != TT_EOF:
-            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "Expected '+', '-', '*', '/', or '\\'"))
+            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find '+', '-', '*', '/', or '\\' ???"))
         
         return result
     
@@ -258,12 +266,37 @@ class Parser:
         
         result = ParseResult()
         token = self.current_token
+        
+        # Unary operation like -5
+        if token.type in (TT_ADD, TT_SUB):
+            result.register(self.advance())
+            factor = result.register(self.factor())
+            
+            if result.error:
+                return result
+
+            return result.success(UnaryOperationNode(token, factor))
     
-        if token.type in (TT_INT, TT_FLOAT):
+        # Normal integer or float like 5
+        elif token.type in (TT_INT, TT_FLOAT):
             result.register(self.advance())
             return result.success(NumberNode(token))
 
-        return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "Expected integer or float"))
+        # Parenthesis with expression inside
+        elif token.type == TT_LPAREN:
+            result.register(self.advance())
+            expression = result.register(self.expression())
+            
+            if result.error:
+                return result
+            
+            if self.current_token.type == TT_RPAREN:
+                result.register(self.advance())
+                return result.success(expression)
+            else:
+                return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "Close your parenthesis!"))
+
+        return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "I didn't find an integer or float! >:("))
 
     def term(self):
 
