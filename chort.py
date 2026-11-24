@@ -204,7 +204,7 @@ class ParseResult:
         
         if isinstance(result, ParseResult):
             if result.error:
-                self.error = result.error(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "Expected '+', '-', '*', '/', or '\\'"))
+                self.error = result.error
             return result.node
                 
         return result
@@ -243,7 +243,7 @@ class Parser:
         result = self.expression()
         
         if not result.error and self.current_token.type != TT_EOF:
-            return result.failure
+            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "Expected '+', '-', '*', '/', or '\\'"))
         
         return result
     
