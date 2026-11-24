@@ -72,9 +72,13 @@ TT_SUB = "SUB" # Subtract : -
 TT_MUL = "MUL" # Multiply : *
 TT_DIV = "DIV" # Divide : /
 TT_MOD = "MOD" # Modulo : \
-
+    
+TT_LPAREN = "LPAREN"    
+TT_RPAREN = "RPAREN"    
+    
 # Token Equivalences
-TT_NON_VALUE_EQUIVALENCES = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD} 
+TT_NON_VALUE_EQ = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD} 
+TT_PARENTHESIS_EQ = {"(" : TT_LPAREN, ")" : TT_RPAREN}
 
 class Token:
 
@@ -131,8 +135,11 @@ class Lexer:
             # Ignores spaces and tabs
             if self.current_char in " \t":
                 self.advance()
-            elif self.current_char in TT_NON_VALUE_EQUIVALENCES.keys():
-                tokens.append(Token(TT_NON_VALUE_EQUIVALENCES[self.current_char], pos_start=self.pos))
+            elif self.current_char in TT_NON_VALUE_EQ.keys():
+                tokens.append(Token(TT_NON_VALUE_EQ[self.current_char], pos_start=self.pos))
+                self.advance()
+            elif self.current_char in TT_PARENTHESIS_EQ.keys():
+                tokens.append(Token(TT_PARENTHESIS_EQ[self.current_char], pos_start=self.pos))
                 self.advance()
             elif self.current_char in DIGITS:
                 tokens.append(self.make_number())
