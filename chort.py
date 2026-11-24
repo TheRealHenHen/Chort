@@ -88,6 +88,7 @@ TT_EOF = "EOF" # End of File
 
 TT_INT = "INT"
 TT_FLOAT = "FLOAT"
+TT_BOOL = "BOOL"
 
 TT_ADD = "ADD" # Add : +
 TT_SUB = "SUB" # Subtract : -
@@ -388,15 +389,19 @@ class Parser:
         
         if self.current_token.type == TT_IDENTIFIER:
             
-            variable_name = self.current_token
-            result.register(self.advance())
+            next_token = self.tokens[self.token_index + 1]
             
-            expression = result.register(self.expression())
+            if next_token.type in (TT_INT, TT_FLOAT, TT_IDENTIFIER, TT_LPAREN):
             
-            if result.error:
-                return result
+                variable_name = self.current_token
+                result.register(self.advance())
+
+                expression = result.register(self.expression())
             
-            return result.success(VariableAssignNode(variable_name, expression))
+                if result.error:
+                    return result
+            
+                return result.success(VariableAssignNode(variable_name, expression))
             
         return self.binary_operation(self.term, (TT_ADD, TT_SUB))    
 
@@ -433,7 +438,7 @@ class RuntimeResult:
     def register(self, result):
         
         if result.error:
-            self.error = self.error
+            self.error = result.error
         
         return result.value
 
