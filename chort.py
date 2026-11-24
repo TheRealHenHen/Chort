@@ -8,34 +8,49 @@ DIGITS = "0123456789"
 class Error:
     
     def __init__(self, pos_start, pos_end, error_name, details):
-
         self.pos_start = pos_start
         self.pos_end = pos_end
         self.error_name = error_name
         self.details = details
 
     def as_string(self):
-
-        result = f"{self.error_name}: {self.details}"
-        result = f"File {self.pos_start.file_name}, Line {self.pos_start.line + 1}"
+        result = f"{self.error_name}: {self.details}\n"
+        result += f"File {self.pos_start.file_name}, line {self.pos_start.line + 1}"
         return result
 
 class IllegalCharError(Error):
         
     def __init__(self, pos_start, pos_end, details):
-        super().__init__(pos_start, pos_end, "Illegal Character >:(", details)
+        super().__init__(pos_start, pos_end, "Illegal Character", details)
 
 class InvalidSyntaxError(Error):
         
     def __init__(self, pos_start, pos_end, details):
-        super().__init__(pos_start, pos_end, "Illegal Syntax >:(", details)
+        super().__init__(pos_start, pos_end, "Illegal Syntax", details)
 
 class RuntimeError(Error):
         
-    def __init__(self, pos_start, pos_end, details):
-        super().__init__(pos_start, pos_end, "Runtime Error >:O", details)
+    def __init__(self, pos_start, pos_end, details, context):
+        super().__init__(pos_start, pos_end, "Runtime Error", details)
+        self.context = context
+    
+    def as_string(self):
+        result = self.generate_traceback()
+        result += f"{self.error_name}: {self.details}"
+        return result
 
+    def generate_traceback(self):
 
+        result = ""
+        pos = self.pos_start
+        context = self.context
+
+        while context:
+            result = f"     File {pos.file_name}, line {pos.line + 1}, in {context.display_name}\n" + result
+            pos = context.parent_entry_pos
+            context = context.parent
+            
+        return "Traceback!:\n" + result
 
 # =========== POSITION ===========
 
@@ -374,6 +389,7 @@ class Number:
         
         self.value = value
         self.set_pos()
+        self.set_context()
         
     def set_pos(self, pos_start = None, pos_end = None):
         
@@ -381,58 +397,72 @@ class Number:
         self.pos_end = pos_end
         
         return self
+    
+    def set_context(self, context = None):
+        self.context = context
+        return self
 
     def added_to(self, other):
         if isinstance(other, Number):
-            return Number(self.value + other.value), None
+            return Number(self.value + other.value).set_context(self.context), None
 
     def subtracted_by(self, other):
         if isinstance(other, Number):
-            return Number(self.value - other.value), None
+            return Number(self.value - other.value).set_context(self.context), None
         
     def multiplied_to(self, other):
         if isinstance(other, Number):
-            return Number(self.value * other.value), None
+            return Number(self.value * other.value).set_context(self.context), None
         
     def divided_by(self, other):
         if isinstance(other, Number):
             if other.value == 0:
-                return None, RuntimeError(other.pos_start, other.pos_end, "We don't know what divided by zero is yet!")
-            return Number(self.value / other.value), None
+                return None, RuntimeError(other.pos_start, other.pos_end, "We don't know what divided by zero is yet!", self.context)
+            return Number(self.value / other.value).set_context(self.context), None
 
     def __repr__(self):
         return str(self.value)
+
+# =========== CONTEXT ===========
+
+class Context:
+    
+    def __init__(self, display_name, parent = None, parent_entry_pos = None):
+        self.display_name = display_name
+        self.parent = parent
+        self.parent_entry_pos = parent_entry_pos
+
 
 # =========== INTERPRETER ===========
 
 class Interpreter:
     
-    def visit(self, node):
+    def visit(self, node, context):
         
         method_name = f"visit_{type(node).__name__}"
 
         method = getattr(self, method_name, self.no_visit_method)
         
-        return method(node)
+        return method(node, context)
 
-    def no_visit_method(self, node):
+    def no_visit_method(self, node, context):
         
         raise Exception(f"I can't visit that method! ({type(node).__name__} doesn't exist bro)")
 
-    def visit_NumberNode(self, node):
+    def visit_NumberNode(self, node, context):
         
-        return RuntimeResult().success(Number(node.token.value).set_pos(node.pos_start, node.pos_end))
+        return RuntimeResult().success(Number(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end))
         
-    def visit_BinaryOperatorNode(self, node):
+    def visit_BinaryOperatorNode(self, node, context):
         
         response = RuntimeResult()
         
-        left = response.register(self.visit(node.left_node))
+        left = response.register(self.visit(node.left_node, context))
         
         if response.error:
             return response
         
-        right = response.register(self.visit(node.right_node))
+        right = response.register(self.visit(node.right_node, context))
 
         if response.error:
             return response
@@ -453,11 +483,11 @@ class Interpreter:
         else:
             return response.success(result.set_pos(node.pos_start, node.pos_end))
             
-    def visit_UnaryOperatorNode(self, node):
+    def visit_UnaryOperatorNode(self, node, context):
 
         result = RuntimeResult()
 
-        number = result.register(self.visit(node.node))
+        number = result.register(self.visit(node.node, context))
         
         if result.error:
             return result
@@ -492,6 +522,7 @@ def run(file_name, text):
 
     # Run program
     interpreter = Interpreter()
-    result = interpreter.visit(ast.node)
+    context = Context("<program>")
+    result = interpreter.visit(ast.node, context)
     
     return result.value, result.error
