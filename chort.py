@@ -188,7 +188,7 @@ class NumberNode:
     def __repr__(self):
         return f"{self.token}"
 
-class BinaryOperationNode:
+class BinaryOperatorNode:
     
     def __init__(self, left_node, operator_token, right_node):
         self.left_node = left_node
@@ -198,7 +198,7 @@ class BinaryOperationNode:
     def __repr__(self):
         return f"({self.left_node}, {self.operator_token}, {self.right_node})"
 
-class UnaryOperationNode:
+class UnaryOperatorNode:
     
     def __init__(self, operator_token, node):
         self.operator_token = operator_token
@@ -275,7 +275,7 @@ class Parser:
             if result.error:
                 return result
 
-            return result.success(UnaryOperationNode(token, factor))
+            return result.success(UnaryOperatorNode(token, factor))
     
         # Normal integer or float like 5
         elif token.type in (TT_INT, TT_FLOAT):
@@ -322,10 +322,39 @@ class Parser:
             if result.error:
                 return result
             
-            left = BinaryOperationNode(left, operator_token, right)
+            left = BinaryOperatorNode(left, operator_token, right)
             
         return result.success(left)
             
+
+# =========== INTERPRETER ===========
+
+class Interpreter:
+    
+    def visit(self, node):
+        
+        method_name = f"visit_{type(node).__name__}"
+
+        method = getattr(self, method_name, self.no_visit_method)
+        
+        return method(node)
+
+    def no_visit_method(self, node):
+        
+        raise Exception(f"I can't visit that method! ({type(node).__name__} doesn't exist bro)")
+
+    def visit_NumberNode(self, node):
+        print("Found number node!")
+        
+    def visit_BinaryOperatorNode(self, node):
+        print("Found binary operator node!")
+        self.visit(node.left_node)
+        self.visit(node.right_node)
+
+    def visit_UnaryOperatorNode(self, node):
+        print("Found unary operator node!")
+        self.visit(node.node)
+
 
 # =========== RUN ===========
 
@@ -341,5 +370,12 @@ def run(file_name, text):
     # Generate abstract syntax tree
     parser = Parser(tokens)
     ast = parser.parse()
+    
+    if ast.error:
+        return None, ast.error
 
-    return ast.node, ast.error
+    # Run program
+    interpreter = Interpreter()
+    interpreter.visit(ast.node)
+    
+    return None, None
