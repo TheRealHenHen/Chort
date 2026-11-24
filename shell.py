@@ -1,0 +1,10 @@
+import chort
+
+while True:
+    text = input("chort > ")
+    result, error = chort.run("<stdin>", text)
+
+    if error:
+        print(error.as_string())
+    else:
+        print(result)
