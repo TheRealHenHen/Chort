@@ -185,6 +185,9 @@ class NumberNode:
     def __init__(self, token):
         self.token = token
     
+        self.pos_start = self.token.pos_start
+        self.pos_end = self.token.pos_end
+    
     def __repr__(self):
         return f"{self.token}"
 
@@ -195,6 +198,9 @@ class BinaryOperatorNode:
         self.operator_token = operator_token
         self.right_node = right_node
 
+        self.pos_start = self.left_node.pos_start
+        self.pos_end = self.right_node.pos_end
+
     def __repr__(self):
         return f"({self.left_node}, {self.operator_token}, {self.right_node})"
 
@@ -203,6 +209,9 @@ class UnaryOperatorNode:
     def __init__(self, operator_token, node):
         self.operator_token = operator_token
         self.node = node
+        
+        self.pos_start = self.operator_token.pos_start
+        self.pos_end = node.pos_end
         
     def __repr__(self):
         return f"({self.operator_token}, {self.node})"
@@ -327,6 +336,41 @@ class Parser:
         return result.success(left)
             
 
+# =========== VALUES ===========
+
+class Number:
+    
+    def __init__(self, value):
+        
+        self.value = value
+        self.set_pos()
+        
+    def set_pos(self, pos_start = None, pos_end = None):
+        
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+        
+        return self
+
+    def added_to(self, other):
+        if isinstance(other, Number):
+            return Number(self.value + other.value)
+
+    def subtracted_by(self, other):
+        if isinstance(other, Number):
+            return Number(self.value - other.value)
+        
+    def multiplied_to(self, other):
+        if isinstance(other, Number):
+            return Number(self.value * other.value)
+        
+    def divided_by(self, other):
+        if isinstance(other, Number):
+            return Number(self.value / other.value)
+
+    def __repr__(self):
+        return str(self.value)
+
 # =========== INTERPRETER ===========
 
 class Interpreter:
@@ -344,17 +388,33 @@ class Interpreter:
         raise Exception(f"I can't visit that method! ({type(node).__name__} doesn't exist bro)")
 
     def visit_NumberNode(self, node):
-        print("Found number node!")
+        return Number(node.token.value).set_pos(node.pos_start, node.pos_end)
         
     def visit_BinaryOperatorNode(self, node):
-        print("Found binary operator node!")
-        self.visit(node.left_node)
-        self.visit(node.right_node)
+        left = self.visit(node.left_node)
+        right = self.visit(node.right_node)
 
+        operator = node.operator_token.type
+
+        if operator == TT_ADD:
+            result = left.added_to(right)
+        elif operator == TT_SUB:
+            result = left.subtracted_by(right)
+        elif operator == TT_MUL:
+            result = left.multiplied_to(right)
+        elif operator == TT_DIV:
+            result = left.divided_by(right)
+            
+        return result.set_pos(node.pos_start, node.pos_end)
+            
     def visit_UnaryOperatorNode(self, node):
-        print("Found unary operator node!")
-        self.visit(node.node)
 
+        number = self.visit(node.node)
+
+        if node.operator_token.type == TT_SUB:
+            number = number.multiplied_to(Number(-1))
+            
+        return number.set_pos(node.pos_start, node.pos_end)
 
 # =========== RUN ===========
 
@@ -376,6 +436,6 @@ def run(file_name, text):
 
     # Run program
     interpreter = Interpreter()
-    interpreter.visit(ast.node)
+    result = interpreter.visit(ast.node)
     
-    return None, None
+    return result, None
