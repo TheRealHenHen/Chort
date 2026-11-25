@@ -4,7 +4,7 @@ import string
 
 DIGITS = "0123456789"
 LETTERS = string.ascii_letters
-RESERVED_KEYWORDS = "deFgipstT"
+RESERVED_KEYWORDS = "deFgipstT&|!"
 
 # =========== ERROR ===========
 
@@ -89,6 +89,11 @@ TT_EOF = "EOF" # End of File
 TT_INT = "INT"
 TT_FLOAT = "FLOAT"
 TT_BOOL = "BOOL"
+
+TT_EE = "EE"
+TT_NE = "NE"
+TT_LT = "LT"
+TT_GT = "GT"
 
 TT_ADD = "ADD" # Add : +
 TT_SUB = "SUB" # Subtract : -
@@ -179,6 +184,11 @@ class Lexer:
                 
             elif self.current_char in LETTERS:
                 tokens.append(self.make_identifier())
+                
+            elif self.current_char == "!":
+                token, error = self.make_not_equals()
+                if error: return [], error
+                tokens.append(token)
                 
             else:
                 pos_start = self.pos.copy()
@@ -288,24 +298,24 @@ class ParseResult:
     def __init__(self):
         self.error = None
         self.node = None
+        self.advance_count = 0
+
+    def register_advancement(self):
+        self.advance_count += 1
         
-    def register(self, result):
-        
-        if isinstance(result, ParseResult):
-            if result.error:
-                self.error = result.error
-            return result.node
-                
-        return result
+    def register(self, result):    
+        self.advance_count += result.advance_count
+        if result.error:
+            self.error = result.error
+        return result.node
         
     def success(self, node):
-        
         self.node = node
         return self
         
     def failure(self, error):
-
-        self.error = error
+        if not self.error or self.advance_count == 0:
+            self.error = error
         return self
 
 # =========== PARSER ===========
@@ -344,7 +354,8 @@ class Parser:
         # Unary operation like -5
         if token.type in (TT_ADD, TT_SUB):
             
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             factor = result.register(self.factor())
             
             if result.error:
@@ -354,30 +365,34 @@ class Parser:
     
         # Normal integer or float like 5
         elif token.type in (TT_INT, TT_FLOAT):
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             return result.success(NumberNode(token))
 
         # Parenthesis with expression inside
         elif token.type == TT_LPAREN:
             
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             expression = result.register(self.expression())
             
             if result.error:
                 return result
             
             if self.current_token.type == TT_RPAREN:
-                result.register(self.advance())
+                result.register_advancement()
+                self.advance()
                 return result.success(expression)
             else:
                 return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "Close your parenthesis!"))
 
         # Variable
         elif token.type == TT_IDENTIFIER:
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             return result.success(VariableAccessNode(token))
 
-        return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "I didn't find an integer or float! >:("))
+        return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "I didn't find an integer, float, or identifier! >:("))
 
     def term(self):
 
@@ -394,7 +409,8 @@ class Parser:
             if next_token.type in (TT_INT, TT_FLOAT, TT_IDENTIFIER, TT_LPAREN):
             
                 variable_name = self.current_token
-                result.register(self.advance())
+                result.register_advancement()
+                self.advance()
 
                 expression = result.register(self.expression())
             
@@ -403,7 +419,12 @@ class Parser:
             
                 return result.success(VariableAssignNode(variable_name, expression))
             
-        return self.binary_operation(self.term, (TT_ADD, TT_SUB))    
+        node = result.register(self.binary_operation(self.term, (TT_ADD, TT_SUB)))
+        
+        if result.error:
+            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find an integer, float, identifier or keyword! >:("))
+        
+        return result.success(node)    
 
     def binary_operation(self, function, operations):
         
@@ -415,7 +436,8 @@ class Parser:
     
         while self.current_token.type in operations:
             operator_token = self.current_token
-            result.register(self.advance())
+            result.register_advancement()
+            self.advance()
             right = result.register(function())
             
             if result.error:
