@@ -4,7 +4,7 @@ import string
 
 DIGITS = "0123456789"
 LETTERS = string.ascii_letters
-RESERVED_KEYWORDS = "deFgipstT&|!"
+RESERVED_KEYWORDS = "deFgipstT"
 
 # =========== ERROR ===========
 
@@ -90,10 +90,14 @@ TT_INT = "INT"
 TT_FLOAT = "FLOAT"
 TT_BOOL = "BOOL"
 
-TT_EE = "EE"
-TT_NE = "NE"
-TT_LT = "LT"
-TT_GT = "GT"
+TT_EE = "EE" # Equal to : =
+TT_NE = "NE" # Not equal to : !
+TT_LT = "LT" # Less than : <
+TT_GT = "GT" # Greater than : >
+
+TT_AND = "AND" # And : &
+TT_OR = "OR" # Or : |
+TT_NOT = "NOT" # Not : ~
 
 TT_ADD = "ADD" # Add : +
 TT_SUB = "SUB" # Subtract : -
@@ -108,7 +112,7 @@ TT_IDENTIFIER = "IDENTIFIER" # Variable name
 TT_KEYWORD = "KEYWORD"    
     
 # Token Equivalences
-TT_NON_VALUE_EQ = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD} 
+TT_NON_VALUE_EQ = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD, "=" : TT_EE, "!" : TT_NE, "<" : TT_LT, ">" : TT_GT,"&" : TT_AND, "|" : TT_OR, "~" : TT_NOT} 
 TT_PARENTHESIS_EQ = {"(" : TT_LPAREN, ")" : TT_RPAREN}
 
 class Token:
@@ -132,7 +136,7 @@ class Token:
 
     def __repr__(self):
 
-        if self.value:
+        if self.value != None:
             return f"{self.type}:{self.value}"
         else:   
             return f"{self.type}"
@@ -185,11 +189,6 @@ class Lexer:
             elif self.current_char in LETTERS:
                 tokens.append(self.make_identifier())
                 
-            elif self.current_char == "!":
-                token, error = self.make_not_equals()
-                if error: return [], error
-                tokens.append(token)
-                
             else:
                 pos_start = self.pos.copy()
                 char = self.current_char
@@ -230,6 +229,12 @@ class Lexer:
         pos_start = self.pos.copy()
         self.advance()
 
+        # T and F are booleans
+        if identifier_string == "T":
+            return Token(TT_BOOL, True, pos_start, self.pos)
+        elif identifier_string == "F":
+            return Token(TT_BOOL, False, pos_start, self.pos)
+
         token_type = TT_KEYWORD if identifier_string in RESERVED_KEYWORDS else TT_IDENTIFIER
         
         return Token(token_type, identifier_string, pos_start, self.pos)
@@ -237,6 +242,17 @@ class Lexer:
 # =========== NODES ===========
 
 class NumberNode:
+    
+    def __init__(self, token):
+        self.token = token
+    
+        self.pos_start = self.token.pos_start
+        self.pos_end = self.token.pos_end
+    
+    def __repr__(self):
+        return f"{self.token}"
+
+class BooleanNode:
     
     def __init__(self, token):
         self.token = token
@@ -342,7 +358,7 @@ class Parser:
         result = self.expression()
         
         if not result.error and self.current_token.type != TT_EOF:
-            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find '+', '-', '*', '/', or '\\' ???"))
+            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find '+', '-', '*', '/', '\\', '=', '!', '<', '>', '&', or '|' ???"))
         
         return result
     
@@ -369,6 +385,12 @@ class Parser:
             self.advance()
             return result.success(NumberNode(token))
 
+        # Booleans
+        elif token.type == TT_BOOL:
+            result.register_advancement()
+            self.advance()
+            return result.success(BooleanNode(token))
+
         # Parenthesis with expression inside
         elif token.type == TT_LPAREN:
             
@@ -392,11 +414,37 @@ class Parser:
             self.advance()
             return result.success(VariableAccessNode(token))
 
-        return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "I didn't find an integer, float, or identifier! >:("))
+        return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "I didn't find an integer, float, boolean, or identifier! >:("))
 
     def term(self):
+        return self.binary_operation(self.factor, (TT_MUL, TT_DIV, TT_MOD))
 
-        return self.binary_operation(self.factor, (TT_MUL, TT_DIV))
+    def arithmetic_expression(self):
+        return self.binary_operation(self.term, (TT_ADD, TT_SUB))
+
+    def comp_expression(self):
+
+        result = ParseResult()
+
+        # Not operation like ~T
+        if self.current_token.type == TT_NOT:
+
+            operator_token = self.current_token
+            result.register_advancement()
+            self.advance()
+
+            node = result.register(self.comp_expression())
+
+            if result.error:
+                return result
+
+            return result.success(UnaryOperatorNode(operator_token, node))
+
+        return self.binary_operation(self.arithmetic_expression, (TT_EE, TT_NE, TT_LT, TT_GT))
+
+    def and_expression(self):
+
+        return self.binary_operation(self.comp_expression, (TT_AND,))
     
     def expression(self):
         
@@ -406,7 +454,7 @@ class Parser:
             
             next_token = self.tokens[self.token_index + 1]
             
-            if next_token.type in (TT_INT, TT_FLOAT, TT_IDENTIFIER, TT_LPAREN):
+            if next_token.type in (TT_INT, TT_FLOAT, TT_BOOL, TT_IDENTIFIER, TT_LPAREN, TT_NOT):
             
                 variable_name = self.current_token
                 result.register_advancement()
@@ -419,10 +467,10 @@ class Parser:
             
                 return result.success(VariableAssignNode(variable_name, expression))
             
-        node = result.register(self.binary_operation(self.term, (TT_ADD, TT_SUB)))
+        node = result.register(self.binary_operation(self.and_expression, (TT_OR,)))
         
         if result.error:
-            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find an integer, float, identifier or keyword! >:("))
+            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find an integer, float, boolean, identifier or keyword! >:("))
         
         return result.success(node)    
 
@@ -476,14 +524,8 @@ class RuntimeResult:
 
 # =========== VALUES ===========
 
-class Number:
-    
-    def __init__(self, value):
-        
-        self.value = value
-        self.set_pos()
-        self.set_context()
-        
+class Value:
+
     def set_pos(self, pos_start = None, pos_end = None):
         
         self.pos_start = pos_start
@@ -494,6 +536,58 @@ class Number:
     def set_context(self, context = None):
         self.context = context
         return self
+
+    # Every operation is illegal unless the value type has its own version of it
+    def added_to(self, other):
+        return None, self.illegal_operation(other)
+
+    def subtracted_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def multiplied_to(self, other):
+        return None, self.illegal_operation(other)
+
+    def divided_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def modulo_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def equal_to(self, other):
+        return None, self.illegal_operation(other)
+
+    def not_equal_to(self, other):
+        return None, self.illegal_operation(other)
+
+    def less_than(self, other):
+        return None, self.illegal_operation(other)
+
+    def greater_than(self, other):
+        return None, self.illegal_operation(other)
+
+    def anded_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def ored_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def notted(self):
+        return None, self.illegal_operation()
+
+    def illegal_operation(self, other = None):
+
+        if other == None:
+            other = self
+
+        return RuntimeError(self.pos_start, other.pos_end, "I can't do that operation on those values!", self.context)
+
+class Number(Value):
+    
+    def __init__(self, value):
+        
+        self.value = value
+        self.set_pos()
+        self.set_context()
 
     def added_to(self, other):
         if isinstance(other, Number):
@@ -513,8 +607,60 @@ class Number:
                 return None, RuntimeError(other.pos_start, other.pos_end, "We don't know what divided by zero is yet!", self.context)
             return Number(self.value / other.value).set_context(self.context), None
 
+    def modulo_by(self, other):
+        if isinstance(other, Number):
+            if other.value == 0:
+                return None, RuntimeError(other.pos_start, other.pos_end, "We don't know what modulo zero is yet!", self.context)
+            return Number(self.value % other.value).set_context(self.context), None
+
+    def equal_to(self, other):
+        if isinstance(other, Number):
+            return Boolean(self.value == other.value).set_context(self.context), None
+
+    def not_equal_to(self, other):
+        if isinstance(other, Number):
+            return Boolean(self.value != other.value).set_context(self.context), None
+
+    def less_than(self, other):
+        if isinstance(other, Number):
+            return Boolean(self.value < other.value).set_context(self.context), None
+
+    def greater_than(self, other):
+        if isinstance(other, Number):
+            return Boolean(self.value > other.value).set_context(self.context), None
+
     def __repr__(self):
         return str(self.value)
+
+class Boolean(Value):
+
+    def __init__(self, value):
+
+        self.value = value
+        self.set_pos()
+        self.set_context()
+
+    def equal_to(self, other):
+        if isinstance(other, Boolean):
+            return Boolean(self.value == other.value).set_context(self.context), None
+
+    def not_equal_to(self, other):
+        if isinstance(other, Boolean):
+            return Boolean(self.value != other.value).set_context(self.context), None
+
+    def anded_by(self, other):
+        if isinstance(other, Boolean):
+            return Boolean(self.value and other.value).set_context(self.context), None
+
+    def ored_by(self, other):
+        if isinstance(other, Boolean):
+            return Boolean(self.value or other.value).set_context(self.context), None
+
+    def notted(self):
+        return Boolean(not self.value).set_context(self.context), None
+
+    def __repr__(self):
+        return "T" if self.value else "F"
 
 # =========== CONTEXT ===========
 
@@ -569,6 +715,10 @@ class Interpreter:
     def visit_NumberNode(self, node, context):
         
         return RuntimeResult().success(Number(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end))
+
+    def visit_BooleanNode(self, node, context):
+        
+        return RuntimeResult().success(Boolean(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end))
         
     def visit_BinaryOperatorNode(self, node, context):
         
@@ -586,6 +736,10 @@ class Interpreter:
 
         operator = node.operator_token.type
 
+        # Both sides need to be the same type, like 1=T doesn't make sense
+        if type(left) != type(right):
+            return response.failure(RuntimeError(node.pos_start, node.pos_end, "Those two values aren't the same type!", context))
+
         if operator == TT_ADD:
             result, error = left.added_to(right)
         elif operator == TT_SUB:
@@ -594,6 +748,20 @@ class Interpreter:
             result, error = left.multiplied_to(right)
         elif operator == TT_DIV:
             result, error = left.divided_by(right)
+        elif operator == TT_MOD:
+            result, error = left.modulo_by(right)
+        elif operator == TT_EE:
+            result, error = left.equal_to(right)
+        elif operator == TT_NE:
+            result, error = left.not_equal_to(right)
+        elif operator == TT_LT:
+            result, error = left.less_than(right)
+        elif operator == TT_GT:
+            result, error = left.greater_than(right)
+        elif operator == TT_AND:
+            result, error = left.anded_by(right)
+        elif operator == TT_OR:
+            result, error = left.ored_by(right)
             
         if error:
             return response.failure(error)
@@ -613,6 +781,8 @@ class Interpreter:
 
         if node.operator_token.type == TT_SUB:
             number, error = number.multiplied_to(Number(-1))
+        elif node.operator_token.type == TT_NOT:
+            number, error = number.notted()
             
         if error:
             return result.failure(error)
