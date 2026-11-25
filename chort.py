@@ -1,5 +1,6 @@
 import re
 import string
+import sys
 
 # =========== CONSTANTS ===========
 
@@ -180,8 +181,8 @@ class Lexer:
 
         while self.current_char != None:
             
-            # Ignores spaces and tabs
-            if self.current_char in " \t":
+            # Ignores spaces, tabs and new lines
+            if self.current_char in " \t\r\n":
                 self.advance()
 
             elif self.current_char in TT_NON_VALUE_EQ.keys():
@@ -1309,3 +1310,31 @@ def run(file_name, text):
     interpreter.watched_vars.clear()
 
     return result.value, result.error
+
+
+# =========== MAIN ===========
+
+if __name__ == "__main__":
+
+    if len(sys.argv) != 2:
+        print("Usage: python3 chort.py <file>")
+        sys.exit(1)
+
+    file_name = sys.argv[1]
+
+    try:
+        with open(file_name, "r", encoding = "utf-8") as file:
+            text = file.read()
+    except (OSError, UnicodeDecodeError):
+        print(f"I can't read '{file_name}'!")
+        sys.exit(1)
+
+    # Nothing to run
+    if text.strip() == "":
+        sys.exit(0)
+
+    result, error = run(file_name, text)
+
+    if error:
+        print(error.as_string())
+        sys.exit(1)
