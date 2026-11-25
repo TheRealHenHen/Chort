@@ -112,7 +112,9 @@ TT_IDENTIFIER = "IDENTIFIER" # Variable name
 TT_KEYWORD = "KEYWORD"    
     
 # Token Equivalences
-TT_NON_VALUE_EQ = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD, "=" : TT_EE, "!" : TT_NE, "<" : TT_LT, ">" : TT_GT, "&" : TT_AND, "|" : TT_OR, "~" : TT_NOT} 
+TT_NON_VALUE_EQ = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD,
+                   "=" : TT_EE, "!" : TT_NE, "<" : TT_LT, ">" : TT_GT,
+                   "&" : TT_AND, "|" : TT_OR, "~" : TT_NOT} 
 TT_PARENTHESIS_EQ = {"(" : TT_LPAREN, ")" : TT_RPAREN}
 
 class Token:
@@ -307,6 +309,30 @@ class UnaryOperatorNode:
     def __repr__(self):
         return f"({self.operator_token}, {self.node})"
 
+class PrintNode:
+    
+    def __init__(self, keyword_token, value_node):
+        self.keyword_token = keyword_token
+        self.value_node = value_node
+        
+        self.pos_start = self.keyword_token.pos_start
+        self.pos_end = self.value_node.pos_end
+        
+    def __repr__(self):
+        return f"({self.keyword_token}, {self.value_node})"
+
+class InputNode:
+    
+    def __init__(self, variable_name_token, keyword_token):
+        self.variable_name_token = variable_name_token
+        self.keyword_token = keyword_token
+        
+        self.pos_start = self.variable_name_token.pos_start
+        self.pos_end = self.keyword_token.pos_end
+        
+    def __repr__(self):
+        return f"({self.variable_name_token}, {self.keyword_token})"
+
 class StatementsNode:
     
     def __init__(self, statement_nodes):
@@ -374,19 +400,54 @@ class Parser:
         result = ParseResult()
         statements = []
         
-        statements.append(result.register(self.expression()))
+        statements.append(result.register(self.statement()))
         
         if result.error:
             return result
         
         while self.current_token.type != TT_EOF:
             
-            statements.append(result.register(self.expression()))
+            statements.append(result.register(self.statement()))
             
             if result.error:
                 return result
         
         return result.success(StatementsNode(statements))
+
+    # A statement is a command like p5 or sx, or just an expression
+    def statement(self):
+        
+        result = ParseResult()
+        
+        # Print like p5
+        if self.current_token.matches(TT_KEYWORD, "p"):
+            
+            keyword_token = self.current_token
+            result.register_advancement()
+            self.advance()
+            
+            # No assignment inside print, so pab6 is print a then b6
+            value_node = result.register(self.or_expression())
+            
+            if result.error:
+                return result
+            
+            return result.success(PrintNode(keyword_token, value_node))
+        
+        # Input like xs
+        if self.current_token.type == TT_IDENTIFIER and self.tokens[self.token_index + 1].matches(TT_KEYWORD, "s"):
+            
+            variable_name = self.current_token
+            result.register_advancement()
+            self.advance()
+            
+            keyword_token = self.current_token
+            result.register_advancement()
+            self.advance()
+            
+            return result.success(InputNode(variable_name, keyword_token))
+        
+        return self.expression()
     
     def factor(self):
         
@@ -443,9 +504,11 @@ class Parser:
         return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "I didn't find an integer, float, boolean, or identifier! >:("))
 
     def term(self):
+
         return self.binary_operation(self.factor, (TT_MUL, TT_DIV, TT_MOD))
 
     def arithmetic_expression(self):
+
         return self.binary_operation(self.term, (TT_ADD, TT_SUB))
 
     def comp_expression(self):
@@ -472,6 +535,10 @@ class Parser:
 
         return self.binary_operation(self.comp_expression, (TT_AND,))
     
+    def or_expression(self):
+
+        return self.binary_operation(self.and_expression, (TT_OR,))
+    
     def expression(self):
         
         result = ParseResult()
@@ -493,7 +560,7 @@ class Parser:
             
                 return result.success(VariableAssignNode(variable_name, expression))
             
-        node = result.register(self.binary_operation(self.and_expression, (TT_OR,)))
+        node = result.register(self.or_expression())
         
         if result.error:
             return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find an integer, float, boolean, identifier or keyword! >:("))
@@ -752,6 +819,44 @@ class Interpreter:
         
         # The value of the last statement is the value of the whole line
         return result.success(value)
+
+    def visit_PrintNode(self, node, context):
+        
+        result = RuntimeResult()
+        
+        value = result.register(self.visit(node.value_node, context))
+        
+        if result.error:
+            return result
+        
+        print(value)
+        
+        return result.success(None)
+
+    def visit_InputNode(self, node, context):
+        
+        result = RuntimeResult()
+        variable_name = node.variable_name_token.value
+        
+        text = input().strip()
+        
+        if text == "T":
+            value = Boolean(True)
+        elif text == "F":
+            value = Boolean(False)
+        else:
+            try:
+                value = Number(int(text))
+            except ValueError:
+                try:
+                    value = Number(float(text))
+                except ValueError:
+                    return result.failure(RuntimeError(node.pos_start, node.pos_end, f"I can only read numbers, T or F for now, not '{text}'!", context))
+        
+        value.set_context(context).set_pos(node.pos_start, node.pos_end)
+        context.symbol_table.set(variable_name, value)
+        
+        return result.success(None)
 
     def visit_NumberNode(self, node, context):
         
