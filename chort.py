@@ -112,7 +112,7 @@ TT_IDENTIFIER = "IDENTIFIER" # Variable name
 TT_KEYWORD = "KEYWORD"    
     
 # Token Equivalences
-TT_NON_VALUE_EQ = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD, "=" : TT_EE, "!" : TT_NE, "<" : TT_LT, ">" : TT_GT,"&" : TT_AND, "|" : TT_OR, "~" : TT_NOT} 
+TT_NON_VALUE_EQ = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD, "=" : TT_EE, "!" : TT_NE, "<" : TT_LT, ">" : TT_GT, "&" : TT_AND, "|" : TT_OR, "~" : TT_NOT} 
 TT_PARENTHESIS_EQ = {"(" : TT_LPAREN, ")" : TT_RPAREN}
 
 class Token:
@@ -307,6 +307,17 @@ class UnaryOperatorNode:
     def __repr__(self):
         return f"({self.operator_token}, {self.node})"
 
+class StatementsNode:
+    
+    def __init__(self, statement_nodes):
+        self.statement_nodes = statement_nodes
+        
+        self.pos_start = self.statement_nodes[0].pos_start
+        self.pos_end = self.statement_nodes[-1].pos_end
+        
+    def __repr__(self):
+        return f"{self.statement_nodes}"
+
 # =========== PARSE RESULT ===========
 
 class ParseResult:
@@ -355,12 +366,27 @@ class Parser:
     
     def parse(self):
         
-        result = self.expression()
+        return self.statements()
+
+    # Statements are chained on one line with no spaces or separators, like a5b6
+    def statements(self):
         
-        if not result.error and self.current_token.type != TT_EOF:
-            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find '+', '-', '*', '/', '\\', '=', '!', '<', '>', '&', or '|' ???"))
+        result = ParseResult()
+        statements = []
         
-        return result
+        statements.append(result.register(self.expression()))
+        
+        if result.error:
+            return result
+        
+        while self.current_token.type != TT_EOF:
+            
+            statements.append(result.register(self.expression()))
+            
+            if result.error:
+                return result
+        
+        return result.success(StatementsNode(statements))
     
     def factor(self):
         
@@ -711,6 +737,21 @@ class Interpreter:
     def no_visit_method(self, node, context):
         
         raise Exception(f"I can't visit that method! ({type(node).__name__} doesn't exist bro)")
+
+    def visit_StatementsNode(self, node, context):
+        
+        result = RuntimeResult()
+        value = None
+        
+        for statement_node in node.statement_nodes:
+            
+            value = result.register(self.visit(statement_node, context))
+            
+            if result.error:
+                return result
+        
+        # The value of the last statement is the value of the whole line
+        return result.success(value)
 
     def visit_NumberNode(self, node, context):
         
