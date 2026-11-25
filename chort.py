@@ -4,7 +4,7 @@ import string
 
 DIGITS = "0123456789"
 LETTERS = string.ascii_letters
-RESERVED_KEYWORDS = "deFgipstT"
+RESERVED_KEYWORDS = "deFgiopstT"
 
 # =========== ERROR ===========
 
@@ -333,6 +333,22 @@ class InputNode:
     def __repr__(self):
         return f"({self.variable_name_token}, {self.keyword_token})"
 
+class IfNode:
+    
+    def __init__(self, cases, else_case):
+        self.cases = cases # List of (condition node, statement node)
+        self.else_case = else_case
+        
+        self.pos_start = self.cases[0][0].pos_start
+        
+        if self.else_case:
+            self.pos_end = self.else_case.pos_end
+        else:
+            self.pos_end = self.cases[-1][1].pos_end
+        
+    def __repr__(self):
+        return f"({self.cases}, {self.else_case})"
+
 class StatementsNode:
     
     def __init__(self, statement_nodes):
@@ -447,7 +463,56 @@ class Parser:
             
             return result.success(InputNode(variable_name, keyword_token))
         
+        # If statement like i3=4tp1o4=5tp2ep3
+        if self.current_token.matches(TT_KEYWORD, "i"):
+            return self.if_statement()
+        
         return self.expression()
+
+    # i<condition>t<statement> then any number of o<condition>t<statement> then an optional e<statement>
+    def if_statement(self):
+        
+        result = ParseResult()
+        cases = []
+        else_case = None
+        
+        keyword = "i"
+        
+        while self.current_token.matches(TT_KEYWORD, keyword):
+            
+            result.register_advancement()
+            self.advance()
+            
+            condition = result.register(self.or_expression())
+            
+            if result.error:
+                return result
+            
+            if not self.current_token.matches(TT_KEYWORD, "t"):
+                return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find a 't' after the condition!"))
+            
+            result.register_advancement()
+            self.advance()
+            
+            statement = result.register(self.statement())
+            
+            if result.error:
+                return result
+            
+            cases.append((condition, statement))
+            keyword = "o"
+        
+        if self.current_token.matches(TT_KEYWORD, "e"):
+            
+            result.register_advancement()
+            self.advance()
+            
+            else_case = result.register(self.statement())
+            
+            if result.error:
+                return result
+        
+        return result.success(IfNode(cases, else_case))
     
     def factor(self):
         
@@ -840,6 +905,7 @@ class Interpreter:
         
         text = input().strip()
         
+        # No strings yet, so the input has to be a number or T or F
         if text == "T":
             value = Boolean(True)
         elif text == "F":
@@ -855,6 +921,40 @@ class Interpreter:
         
         value.set_context(context).set_pos(node.pos_start, node.pos_end)
         context.symbol_table.set(variable_name, value)
+        
+        return result.success(None)
+
+    def visit_IfNode(self, node, context):
+        
+        result = RuntimeResult()
+        
+        for condition_node, statement_node in node.cases:
+            
+            condition = result.register(self.visit(condition_node, context))
+            
+            if result.error:
+                return result
+            
+            if not isinstance(condition, Boolean):
+                return result.failure(RuntimeError(condition_node.pos_start, condition_node.pos_end, "The condition has to be T or F!", context))
+            
+            if condition.value:
+                
+                value = result.register(self.visit(statement_node, context))
+                
+                if result.error:
+                    return result
+                
+                return result.success(value)
+        
+        if node.else_case:
+            
+            value = result.register(self.visit(node.else_case, context))
+            
+            if result.error:
+                return result
+            
+            return result.success(value)
         
         return result.success(None)
 
