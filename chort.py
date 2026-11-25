@@ -1,3 +1,4 @@
+import re
 import string
 
 # =========== CONSTANTS ===========
@@ -100,6 +101,10 @@ TT_AND = "AND" # And : &
 TT_OR = "OR" # Or : |
 TT_NOT = "NOT" # Not : ~
 
+TT_TO_INT = "TO_INT" # Cast to integer : #
+TT_TO_STR = "TO_STR" # Cast to string : @
+TT_TO_BOOL = "TO_BOOL" # Cast to boolean : ?
+
 TT_ADD = "ADD" # Add : +
 TT_SUB = "SUB" # Subtract : -
 TT_MUL = "MUL" # Multiply : *
@@ -115,7 +120,8 @@ TT_KEYWORD = "KEYWORD"
 # Token Equivalences
 TT_NON_VALUE_EQ = {"+" : TT_ADD, "-" : TT_SUB, "*" : TT_MUL, "/" : TT_DIV, "\\": TT_MOD,
                    "=" : TT_EE, "!" : TT_NE, "<" : TT_LT, ">" : TT_GT,
-                   "&" : TT_AND, "|" : TT_OR, "~" : TT_NOT} 
+                   "&" : TT_AND, "|" : TT_OR, "~" : TT_NOT,
+                   "#" : TT_TO_INT, "@" : TT_TO_STR, "?" : TT_TO_BOOL} 
 TT_PARENTHESIS_EQ = {"(" : TT_LPAREN, ")" : TT_RPAREN}
 
 class Token:
@@ -628,8 +634,8 @@ class Parser:
         result = ParseResult()
         token = self.current_token
         
-        # Unary operation like -5
-        if token.type in (TT_ADD, TT_SUB):
+        # Unary operation like -5, or a cast like @5
+        if token.type in (TT_ADD, TT_SUB, TT_TO_INT, TT_TO_STR, TT_TO_BOOL):
             
             result.register_advancement()
             self.advance()
@@ -727,7 +733,7 @@ class Parser:
             
             next_token = self.tokens[self.token_index + 1]
             
-            if next_token.type in (TT_INT, TT_FLOAT, TT_STRING, TT_BOOL, TT_IDENTIFIER, TT_LPAREN, TT_NOT):
+            if next_token.type in (TT_INT, TT_FLOAT, TT_STRING, TT_BOOL, TT_IDENTIFIER, TT_LPAREN, TT_NOT, TT_TO_INT, TT_TO_STR, TT_TO_BOOL):
             
                 variable_name = self.current_token
                 result.register_advancement()
@@ -847,6 +853,15 @@ class Value:
     def notted(self):
         return None, self.illegal_operation()
 
+    def casted_to_int(self):
+        return None, self.illegal_operation()
+
+    def casted_to_string(self):
+        return None, self.illegal_operation()
+
+    def casted_to_boolean(self):
+        return None, self.illegal_operation()
+
     def illegal_operation(self, other = None):
 
         if other == None:
@@ -902,6 +917,15 @@ class Number(Value):
         if isinstance(other, Number):
             return Boolean(self.value > other.value).set_context(self.context), None
 
+    def casted_to_int(self):
+        return Number(int(self.value)).set_context(self.context), None
+
+    def casted_to_string(self):
+        return String(str(self.value)).set_context(self.context), None
+
+    def casted_to_boolean(self):
+        return Boolean(self.value != 0).set_context(self.context), None
+
     def __repr__(self):
         return str(self.value)
 
@@ -924,6 +948,29 @@ class String(Value):
     def not_equal_to(self, other):
         if isinstance(other, String):
             return Boolean(self.value != other.value).set_context(self.context), None
+
+    def casted_to_int(self):
+        try:
+            return Number(int(self.value)).set_context(self.context), None
+        except ValueError:
+            pass
+
+        try:
+            return Number(int(float(self.value))).set_context(self.context), None
+        except (ValueError, OverflowError):
+            return None, RuntimeError(self.pos_start, self.pos_end, f"I can't turn '{self.value}' into an integer!", self.context)
+
+    def casted_to_string(self):
+        return String(self.value).set_context(self.context), None
+
+    # The string has to be T or F
+    def casted_to_boolean(self):
+        if self.value == "T":
+            return Boolean(True).set_context(self.context), None
+        elif self.value == "F":
+            return Boolean(False).set_context(self.context), None
+
+        return None, RuntimeError(self.pos_start, self.pos_end, f"I can only turn 'T' or 'F' into a boolean, not '{self.value}'!", self.context)
 
     def __repr__(self):
         return self.value
@@ -954,6 +1001,16 @@ class Boolean(Value):
 
     def notted(self):
         return Boolean(not self.value).set_context(self.context), None
+
+    # T is 1 and F is 0
+    def casted_to_int(self):
+        return Number(1 if self.value else 0).set_context(self.context), None
+
+    def casted_to_string(self):
+        return String("T" if self.value else "F").set_context(self.context), None
+
+    def casted_to_boolean(self):
+        return Boolean(self.value).set_context(self.context), None
 
     def __repr__(self):
         return "T" if self.value else "F"
@@ -1074,14 +1131,12 @@ class Interpreter:
             value = Boolean(True)
         elif text == "F":
             value = Boolean(False)
+        elif re.fullmatch(r"-?[0-9]+", text):
+            value = Number(int(text))
+        elif re.fullmatch(r"-?[0-9]+\.[0-9]+", text):
+            value = Number(float(text))
         else:
-            try:
-                value = Number(int(text))
-            except ValueError:
-                try:
-                    value = Number(float(text))
-                except ValueError:
-                    value = String(text)
+            value = String(text)
         
         value.set_context(context).set_pos(node.pos_start, node.pos_end)
         self.assign_variable(variable_name, value, context)
@@ -1172,6 +1227,12 @@ class Interpreter:
             operand, error = operand.multiplied_to(Number(-1))
         elif node.operator_token.type == TT_NOT:
             operand, error = operand.notted()
+        elif node.operator_token.type == TT_TO_INT:
+            operand, error = operand.casted_to_int()
+        elif node.operator_token.type == TT_TO_STR:
+            operand, error = operand.casted_to_string()
+        elif node.operator_token.type == TT_TO_BOOL:
+            operand, error = operand.casted_to_boolean()
 
         if error:
             return response.failure(error)
