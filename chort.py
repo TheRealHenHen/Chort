@@ -1124,8 +1124,10 @@ class Interpreter:
         
         result = RuntimeResult()
         variable_name = node.variable_name_token.value
-        
-        text = input().strip()
+        try:
+            text = input().strip()
+        except EOFError:
+            return result.failure(RuntimeError(node.pos_start, node.pos_end, "I didn't get any input!", context))
         
         # Numbers and T or F are read as those, anything else is a string
         if text == "T":
