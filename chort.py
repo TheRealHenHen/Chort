@@ -968,7 +968,7 @@ class Context:
         self.parent_entry_pos = parent_entry_pos
         self.symbol_table = None
 
-# =========== CONTEXT ===========
+# =========== SYMBOL TABLE ===========
 
 class SymbolTable:
     
@@ -1016,10 +1016,11 @@ class Interpreter:
         old_value = context.symbol_table.get(variable_name)
         context.symbol_table.set(variable_name, value)
 
-        # Print whenever the variable is being watched and its value changes
         if variable_name in self.watched_vars:
             if old_value is None or type(old_value) != type(value) or old_value.value != value.value:
-                print(f"{variable_name}: {value}")
+                debug_str_node = StringNode(Token(TT_STRING, f"{variable_name}: {value}", pos_start=value.pos_start, pos_end=value.pos_end))
+                print_node = PrintNode(Token(TT_KEYWORD, "p", pos_start=value.pos_start, pos_end=value.pos_end), debug_str_node)
+                self.visit_PrintNode(print_node, context)
 
     def visit_StatementsNode(self, node, context):
         
@@ -1037,11 +1038,13 @@ class Interpreter:
         return result.success(value)
 
     def visit_DebugStartNode(self, node, context):
+
         variable_name = node.variable_name_token.value
         self.watched_vars.add(variable_name)
         return RuntimeResult().success(None)
 
     def visit_DebugStopNode(self, node, context):
+
         variable_name = node.variable_name_token.value
         self.watched_vars.discard(variable_name)
         return RuntimeResult().success(None)
