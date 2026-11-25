@@ -320,6 +320,9 @@ class VariableAccessNode:
         self.pos_start = self.variable_name_token.pos_start
         self.pos_end = self.variable_name_token.pos_end
 
+    def __repr__(self):
+        return f"{self.variable_name_token}"
+
 class VariableAssignNode:
     
     def __init__(self, variable_name_token, value_node):
@@ -328,7 +331,34 @@ class VariableAssignNode:
         self.value_node = value_node
         
         self.pos_start = self.variable_name_token.pos_start
+        self.pos_end = self.value_node.pos_end
+
+    def __repr__(self):
+        return f"({self.variable_name_token}, {self.value_node})"
+
+class DebugStartNode:
+
+    def __init__(self, keyword_token, variable_name_token):
+        self.keyword_token = keyword_token
+        self.variable_name_token = variable_name_token
+
+        self.pos_start = self.keyword_token.pos_start
         self.pos_end = self.variable_name_token.pos_end
+
+    def __repr__(self):
+        return f"({self.keyword_token}, {self.variable_name_token})"
+
+class DebugStopNode:
+
+    def __init__(self, keyword_token, variable_name_token):
+        self.keyword_token = keyword_token
+        self.variable_name_token = variable_name_token
+
+        self.pos_start = self.keyword_token.pos_start
+        self.pos_end = self.variable_name_token.pos_end
+
+    def __repr__(self):
+        return f"({self.keyword_token}, {self.variable_name_token})"
 
 class BinaryOperatorNode:
     
@@ -495,9 +525,41 @@ class Parser:
                 return result
             
             return result.success(PrintNode(keyword_token, value_node))
+
+        # Start debugging a variable like dx
+        if self.current_token.matches(TT_KEYWORD, "d"):
+
+            keyword_token = self.current_token
+            result.register_advancement()
+            self.advance()
+
+            if self.current_token.type != TT_IDENTIFIER:
+                return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find a variable name after 'd'!"))
+
+            variable_name = self.current_token
+            result.register_advancement()
+            self.advance()
+
+            return result.success(DebugStartNode(keyword_token, variable_name))
+
+        # Stop debugging a variable like gx
+        if self.current_token.matches(TT_KEYWORD, "g"):
+
+            keyword_token = self.current_token
+            result.register_advancement()
+            self.advance()
+
+            if self.current_token.type != TT_IDENTIFIER:
+                return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find a variable name after 'g'!"))
+
+            variable_name = self.current_token
+            result.register_advancement()
+            self.advance()
+
+            return result.success(DebugStopNode(keyword_token, variable_name))
         
         # Input like xs
-        if self.current_token.type == TT_IDENTIFIER and self.tokens[self.token_index + 1].matches(TT_KEYWORD, "s"):
+        if self.current_token.type == TT_IDENTIFIER and self.token_index + 1 < len(self.tokens) and self.tokens[self.token_index + 1].matches(TT_KEYWORD, "s"):
             
             variable_name = self.current_token
             result.register_advancement()
@@ -661,7 +723,7 @@ class Parser:
         
         result = ParseResult()
         
-        if self.current_token.type == TT_IDENTIFIER:
+        if self.current_token.type == TT_IDENTIFIER and self.token_index + 1 < len(self.tokens):
             
             next_token = self.tokens[self.token_index + 1]
             
@@ -933,6 +995,9 @@ class SymbolTable:
 # =========== INTERPRETER ===========
 
 class Interpreter:
+
+    def __init__(self):
+        self.watched_vars = set()
     
     def visit(self, node, context):
         
@@ -945,6 +1010,16 @@ class Interpreter:
     def no_visit_method(self, node, context):
         
         raise Exception(f"I can't visit that method! ({type(node).__name__} doesn't exist bro)")
+
+    def assign_variable(self, variable_name, value, context):
+
+        old_value = context.symbol_table.get(variable_name)
+        context.symbol_table.set(variable_name, value)
+
+        # Print whenever the variable is being watched and its value changes
+        if variable_name in self.watched_vars:
+            if old_value is None or type(old_value) != type(value) or old_value.value != value.value:
+                print(f"{variable_name}: {value}")
 
     def visit_StatementsNode(self, node, context):
         
@@ -960,6 +1035,16 @@ class Interpreter:
         
         # The value of the last statement is the value of the whole line
         return result.success(value)
+
+    def visit_DebugStartNode(self, node, context):
+        variable_name = node.variable_name_token.value
+        self.watched_vars.add(variable_name)
+        return RuntimeResult().success(None)
+
+    def visit_DebugStopNode(self, node, context):
+        variable_name = node.variable_name_token.value
+        self.watched_vars.discard(variable_name)
+        return RuntimeResult().success(None)
 
     def visit_PrintNode(self, node, context):
         
@@ -996,7 +1081,7 @@ class Interpreter:
                     value = String(text)
         
         value.set_context(context).set_pos(node.pos_start, node.pos_end)
-        context.symbol_table.set(variable_name, value)
+        self.assign_variable(variable_name, value, context)
         
         return result.success(None)
 
@@ -1034,6 +1119,30 @@ class Interpreter:
         
         return result.success(None)
 
+    def visit_VariableAccessNode(self, node, context):
+
+        result = RuntimeResult()
+        variable_name = node.variable_name_token.value
+        value = context.symbol_table.get(variable_name)
+
+        if not value:
+            return result.failure(RuntimeError(node.pos_start, node.pos_end, f"'{variable_name}' isn't defined yet!", context))
+
+        value = value.copy() if hasattr(value, "copy") else value
+        return result.success(value.set_pos(node.pos_start, node.pos_end).set_context(context))
+
+    def visit_VariableAssignNode(self, node, context):
+
+        result = RuntimeResult()
+        variable_name = node.variable_name_token.value
+        value = result.register(self.visit(node.value_node, context))
+
+        if result.error:
+            return result
+
+        self.assign_variable(variable_name, value, context)
+        return result.success(value)
+
     def visit_NumberNode(self, node, context):
         
         return RuntimeResult().success(Number(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end))
@@ -1045,6 +1154,26 @@ class Interpreter:
     def visit_BooleanNode(self, node, context):
         
         return RuntimeResult().success(Boolean(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end))
+
+    def visit_UnaryOperatorNode(self, node, context):
+
+        response = RuntimeResult()
+        operand = response.register(self.visit(node.node, context))
+
+        if response.error:
+            return response
+
+        error = None
+
+        if node.operator_token.type == TT_SUB:
+            operand, error = operand.multiplied_to(Number(-1))
+        elif node.operator_token.type == TT_NOT:
+            operand, error = operand.notted()
+
+        if error:
+            return response.failure(error)
+
+        return response.success(operand.set_pos(node.pos_start, node.pos_end))
         
     def visit_BinaryOperatorNode(self, node, context):
         
@@ -1088,56 +1217,12 @@ class Interpreter:
             result, error = left.anded_by(right)
         elif operator == TT_OR:
             result, error = left.ored_by(right)
-            
+
         if error:
             return response.failure(error)
-        else:
-            return response.success(result.set_pos(node.pos_start, node.pos_end))
-            
-    def visit_UnaryOperatorNode(self, node, context):
 
-        result = RuntimeResult()
+        return response.success(result.set_pos(node.pos_start, node.pos_end))
 
-        number = result.register(self.visit(node.node, context))
-        
-        if result.error:
-            return result
-        
-        error = None
-
-        if node.operator_token.type == TT_SUB:
-            number, error = number.multiplied_to(Number(-1))
-        elif node.operator_token.type == TT_NOT:
-            number, error = number.notted()
-            
-        if error:
-            return result.failure(error)
-        else:
-            return result.success(number.set_pos(node.pos_start, node.pos_end))
-
-    def visit_VariableAccessNode(self, node, context):
-        
-        result = RuntimeResult()
-        variable_name = node.variable_name_token.value        
-        value = context.symbol_table.get(variable_name)
-        
-        if not value:
-            return result.failure(RuntimeError(node.pos_start, node.pos_end, f"What is '{variable_name}'?", context))
-            
-        return result.success(value)
-    
-    def visit_VariableAssignNode(self, node, context):
-        
-        result = RuntimeResult()
-        variable_name = node.variable_name_token.value        
-        value = result.register(self.visit(node.value_node, context))
-        
-        if result.error:
-            return result
-        
-        context.symbol_table.set(variable_name, value)
-
-        return result.success(value)
 
 # =========== RUN ===========
 
@@ -1145,24 +1230,18 @@ global_symbol_table = SymbolTable()
 
 def run(file_name, text):
 
-    # Generate tokens
     lexer = Lexer(file_name, text)
     tokens, error = lexer.make_tokens()
+    if error: return None, error
 
-    if error:
-        return None, error
-
-    # Generate abstract syntax tree
     parser = Parser(tokens)
     ast = parser.parse()
-    
-    if ast.error:
-        return None, ast.error
+    if ast.error: return None, ast.error
 
-    # Run program
     interpreter = Interpreter()
     context = Context("<program>")
     context.symbol_table = global_symbol_table
     result = interpreter.visit(ast.node, context)
-    
+    interpreter.watched_vars.clear()
+
     return result.value, result.error
