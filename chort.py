@@ -89,6 +89,7 @@ TT_EOF = "EOF" # End of File
 TT_INT = "INT"
 TT_FLOAT = "FLOAT"
 TT_BOOL = "BOOL"
+TT_STRING = "STRING"
 
 TT_EE = "EE" # Equal to : =
 TT_NE = "NE" # Not equal to : !
@@ -191,6 +192,11 @@ class Lexer:
             elif self.current_char in LETTERS:
                 tokens.append(self.make_identifier())
                 
+            elif self.current_char == '"':
+                token, error = self.make_string()
+                if error: return [], error
+                tokens.append(token)
+                
             else:
                 pos_start = self.pos.copy()
                 char = self.current_char
@@ -225,6 +231,35 @@ class Lexer:
         else:
             return Token(TT_FLOAT, float(num_str), pos_start, self.pos)
 
+    # Makes everything between two quotes into a string, spaces included
+    def make_string(self):
+        
+        string = ""
+        pos_start = self.pos.copy()
+        escape_character = False # For things like \n or \"
+        escape_characters = {"n" : "\n", "t" : "\t"}
+        
+        self.advance()
+        
+        while self.current_char != None and (self.current_char != '"' or escape_character):
+            
+            if escape_character:
+                string += escape_characters.get(self.current_char, self.current_char)
+                escape_character = False
+            elif self.current_char == "\\":
+                escape_character = True
+            else:
+                string += self.current_char
+            
+            self.advance()
+        
+        if self.current_char != '"':
+            return None, InvalidSyntaxError(pos_start, self.pos, "Close your string!")
+        
+        self.advance()
+        
+        return Token(TT_STRING, string, pos_start, self.pos), None
+
     def make_identifier(self):
         
         identifier_string = self.current_char
@@ -255,6 +290,17 @@ class NumberNode:
         return f"{self.token}"
 
 class BooleanNode:
+    
+    def __init__(self, token):
+        self.token = token
+    
+        self.pos_start = self.token.pos_start
+        self.pos_end = self.token.pos_end
+    
+    def __repr__(self):
+        return f"{self.token}"
+
+class StringNode:
     
     def __init__(self, token):
         self.token = token
@@ -476,6 +522,7 @@ class Parser:
         cases = []
         else_case = None
         
+        # The first case starts with i, the rest start with o
         keyword = "i"
         
         while self.current_token.matches(TT_KEYWORD, keyword):
@@ -537,6 +584,12 @@ class Parser:
             self.advance()
             return result.success(NumberNode(token))
 
+        # Strings
+        elif token.type == TT_STRING:
+            result.register_advancement()
+            self.advance()
+            return result.success(StringNode(token))
+
         # Booleans
         elif token.type == TT_BOOL:
             result.register_advancement()
@@ -566,7 +619,7 @@ class Parser:
             self.advance()
             return result.success(VariableAccessNode(token))
 
-        return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "I didn't find an integer, float, boolean, or identifier! >:("))
+        return result.failure(InvalidSyntaxError(token.pos_start, token.pos_end, "I didn't find an integer, float, string, boolean, or identifier! >:("))
 
     def term(self):
 
@@ -612,7 +665,7 @@ class Parser:
             
             next_token = self.tokens[self.token_index + 1]
             
-            if next_token.type in (TT_INT, TT_FLOAT, TT_BOOL, TT_IDENTIFIER, TT_LPAREN, TT_NOT):
+            if next_token.type in (TT_INT, TT_FLOAT, TT_STRING, TT_BOOL, TT_IDENTIFIER, TT_LPAREN, TT_NOT):
             
                 variable_name = self.current_token
                 result.register_advancement()
@@ -628,7 +681,7 @@ class Parser:
         node = result.register(self.or_expression())
         
         if result.error:
-            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find an integer, float, boolean, identifier or keyword! >:("))
+            return result.failure(InvalidSyntaxError(self.current_token.pos_start, self.current_token.pos_end, "I didn't find an integer, float, string, boolean, identifier or keyword! >:("))
         
         return result.success(node)    
 
@@ -790,6 +843,29 @@ class Number(Value):
     def __repr__(self):
         return str(self.value)
 
+class String(Value):
+
+    def __init__(self, value):
+
+        self.value = value
+        self.set_pos()
+        self.set_context()
+
+    def added_to(self, other):
+        if isinstance(other, String):
+            return String(self.value + other.value).set_context(self.context), None
+
+    def equal_to(self, other):
+        if isinstance(other, String):
+            return Boolean(self.value == other.value).set_context(self.context), None
+
+    def not_equal_to(self, other):
+        if isinstance(other, String):
+            return Boolean(self.value != other.value).set_context(self.context), None
+
+    def __repr__(self):
+        return self.value
+
 class Boolean(Value):
 
     def __init__(self, value):
@@ -905,7 +981,7 @@ class Interpreter:
         
         text = input().strip()
         
-        # No strings yet, so the input has to be a number or T or F
+        # Numbers and T or F are read as those, anything else is a string
         if text == "T":
             value = Boolean(True)
         elif text == "F":
@@ -917,7 +993,7 @@ class Interpreter:
                 try:
                     value = Number(float(text))
                 except ValueError:
-                    return result.failure(RuntimeError(node.pos_start, node.pos_end, f"I can only read numbers, T or F for now, not '{text}'!", context))
+                    value = String(text)
         
         value.set_context(context).set_pos(node.pos_start, node.pos_end)
         context.symbol_table.set(variable_name, value)
@@ -961,6 +1037,10 @@ class Interpreter:
     def visit_NumberNode(self, node, context):
         
         return RuntimeResult().success(Number(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end))
+
+    def visit_StringNode(self, node, context):
+        
+        return RuntimeResult().success(String(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end))
 
     def visit_BooleanNode(self, node, context):
         
